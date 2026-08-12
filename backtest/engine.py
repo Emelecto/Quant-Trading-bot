@@ -16,6 +16,7 @@ import numpy as np
 from features.build_features import build_feature_matrix
 from risk import risk_management as rm
 from backtest import metrics as M
+from models.monte_carlo_model import MonteCarloModel
 
 
 def run_walk_forward(
@@ -40,6 +41,10 @@ def run_walk_forward(
     # alineamos features con OHLCV para SL/TP
     merged = df.join(feats, how="inner")
     merged = merged.dropna()
+    # descartar columnas no numéricas (timestamp) antes de entrenar modelos
+    non_numeric = merged.select_dtypes(exclude=["number"]).columns
+    if len(non_numeric):
+        merged = merged.drop(columns=non_numeric)
 
     all_returns: list[float] = []
     all_dates: list = []
@@ -70,6 +75,8 @@ def run_walk_forward(
         # señales base en test
         signals = {}
         for inst in trained:
+            if isinstance(inst, MonteCarloModel):
+                inst._prices = test["close"]
             signals[inst.name] = inst.predict(test.drop(columns=["target"]))
 
         # ensemble

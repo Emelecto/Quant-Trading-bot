@@ -6,6 +6,7 @@ Produce features técnicas + retornos/volatilidad, más la variable objetivo
 """
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 from features import indicators as ind
@@ -41,6 +42,11 @@ def build_feature_matrix(
     vol = out["vol_20"]
     threshold = vol_threshold_mult * vol
     out["target"] = ((future_ret > threshold) & (future_ret.notna())).astype(int)
+
+    # descartar columnas no numéricas (ej. timestamp) que puedan llegar en el df
+    out = out.select_dtypes(include=[np.number])
+    if "target" not in out.columns:
+        out["target"] = ((future_ret > threshold) & (future_ret.notna())).astype(int)
 
     out = out.dropna().iloc[:-horizon]
     return out
