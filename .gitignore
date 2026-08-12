@@ -1,0 +1,17 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+data/raw/
+data/processed/
+*.csv
+*.parquet
+models/saved/
+*.joblib
+*.pkl
+.vscode/
+.idea/
+.DS_Store
+*.log

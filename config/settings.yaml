@@ -1,0 +1,43 @@
+# Configuración global del bot DeepFin (paper trading, $0)
+trading:
+  market: crypto
+  horizon: daily
+  assets:
+    - symbol: BTC/USDT
+      name: Bitcoin
+    - symbol: ETH/USDT
+      name: Ethereum
+  timeframe: 1d
+  lookback_years: 3
+
+capital:
+  initial_usd: 50.0
+  risk_per_trade_pct: 0.01
+
+data_source:
+  primary: binance
+  backup: yahoo
+  rate_limit_sleep: 0.25
+
+reproducibility:
+  random_state: 42
+  mc_paths: 1000
+
+risk:
+  stop_loss_atr_mult: 2.0
+  take_profit_rr: 3.0
+  trailing_stop: false
+  regime_filter_adx_threshold: 20.0
+
+ensemble:
+  methods_order:
+    - voting
+    - weighted
+    - stacking
+  weighting_metric: sharpe
+
+backtest:
+  method: walk_forward
+  train_window: 252
+  test_window: 63
+  step: 63
