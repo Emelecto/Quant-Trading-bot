@@ -66,6 +66,29 @@ with col2:
     comp = pd.DataFrame(signals)
     st.line_chart(comp)
 
+# === 3er gráfico: Equity Curve Ensemble vs Buy & Hold (comparación visual) ===
+st.subheader("Equity Curve: Ensemble vs Buy & Hold")
+# Alineamos ambas curvas al mismo índice de fechas para superponerlas
+ens_eq_aligned = (1 + final_signal.shift(1).fillna(0) * df["close"].pct_change()
+                  .reindex(final_signal.index).fillna(0)).cumprod()
+bh_eq_aligned = (1 + df["close"].pct_change().reindex(ens_eq_aligned.index).fillna(0)).cumprod()
+# Normalizamos ambas a 1.0 al inicio para comparar rendimiento relativo de forma justa
+ens_norm = ens_eq_aligned / ens_eq_aligned.iloc[0]
+bh_norm = bh_eq_aligned / bh_eq_aligned.iloc[0]
+cmp_eq = pd.DataFrame({
+    "Ensemble": ens_norm,
+    "Buy & Hold": bh_norm,
+}).dropna()
+fig2 = go.Figure()
+fig2.add_trace(go.Scatter(y=cmp_eq["Ensemble"].values, mode="lines", name="Ensemble"))
+fig2.add_trace(go.Scatter(y=cmp_eq["Buy & Hold"].values, mode="lines", name="Buy & Hold"))
+fig2.update_layout(yaxis_title="Capital normalizado (1.0 = inicio)", xaxis_title="Fecha",
+                   legend=dict(orientation="h"), hovermode="x unified")
+st.plotly_chart(fig2, use_container_width=True)
+st.caption("Ambas curvas arrancan en 1.0 (capital inicial). Línea del ensemble = seguir al bot; "
+           "línea de Buy & Hold = solo comprar y mantener. Si la del ensemble queda por debajo, "
+           "el bot NO superó a no hacer nada en ese periodo.")
+
 st.subheader("Métricas comparativas")
 bh_rets = df["close"].pct_change().dropna()
 bh_eq = (1 + bh_rets).cumprod()
