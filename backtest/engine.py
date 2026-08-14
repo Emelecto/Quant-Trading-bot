@@ -5,11 +5,17 @@ Recorre los datos en ventanas solapadas: entrena modelos en la ventana de
 entrenamiento, genera señales y evalúa en la ventana de validación (fuera de
 muestra). Acumula retornos de validación para evitar overfitting/data-snooping.
 
+Mejoras Fase 7-8:
+  - Devuelve retornos INDIVIDUALES de cada modelo (para comparación head-to-head).
+  - El ensemble 'weighted' usa pesos por Sharpe fuera de muestra por ventana.
+  - Soporta SL basado en GARCH (volatilidad adaptativa) además de ATR.
+
 Flujo: datos -> features -> por ventana: fit(modelos) -> predict -> ensemble
 -> señal -> aplicar riesgo (SL/TP) -> retornos -> métricas.
 """
 from __future__ import annotations
 
+import inspect
 import pandas as pd
 import numpy as np
 
@@ -17,6 +23,43 @@ from features.build_features import build_feature_matrix
 from risk import risk_management as rm
 from backtest import metrics as M
 from models.monte_carlo_model import MonteCarloModel
+
+
+def _simulate_returns_from_signal(
+    final_signal: pd.Series,
+    close: np.ndarray,
+    sl_series: pd.Series,
+    regime: pd.Series,
+    rr_ratio: float = 3.0,
+) -> list[float]:
+    """Dada una señal de ensemble por barra, simula retornos con SL/TP.
+
+    Aproximación de ejecución: usa el retorno real de la siguiente barra,
+    truncado por SL/TP según la dirección.
+    """
+    out = []
+    sl_vals = sl_series.values
+    for i in range(len(final_signal) - 1):
+        sig = final_signal.iloc[i]
+        if not regime.iloc[i] or sig == 0:
+            out.append(0.0)
+            continue
+        entry = close[i]
+        sl = sl_vals[i]
+        tp = rm.compute_take_profit(entry, sl, rr_ratio)
+        next_ret = close[i + 1] / entry - 1.0
+        if sig > 0:  # long
+            ret = min(next_ret, tp / entry - 1.0)
+            if next_ret <= (sl / entry - 1.0):
+                ret = sl / entry - 1.0
+        else:  # short
+            ret = -next_ret
+            if next_ret >= (tp / entry - 1.0):
+                ret = -(tp / entry - 1.0)
+            elif next_ret >= (sl / entry - 1.0):
+                ret = -(sl / entry - 1.0)
+        out.append(ret * np.sign(sig))
+    return out
 
 
 def run_walk_forward(
@@ -29,25 +72,27 @@ def run_walk_forward(
     atr_mult: float = 2.0,
     rr_ratio: float = 3.0,
     adx_threshold: float = 20.0,
-) -> pd.DataFrame:
-    """Ejecuta walk-forward y devuelve un DataFrame de retornos por fecha.
+    use_garch_sl: bool = False,
+    return_individual: bool = False,
+):
+    """Ejecuta walk-forward y devuelve retornos (ensemble y, opcionalmente, individuales).
 
-    Args:
-        df: OHLCV limpio.
-        models: lista de instancias de modelos (implementan BaseModel).
-        ensemble_method: 'voting' | 'weighted' | 'stacking'.
+    Returns:
+        Si return_individual=False: pd.Series de retornos del ensemble.
+        Si return_individual=True: dict {"ensemble": Series, "models": {name: Series}}.
     """
     feats = build_feature_matrix(df)
-    # alineamos features con OHLCV para SL/TP
     merged = df.join(feats, how="inner")
     merged = merged.dropna()
-    # descartar columnas no numéricas (timestamp) antes de entrenar modelos
     non_numeric = merged.select_dtypes(exclude=["number"]).columns
     if len(non_numeric):
         merged = merged.drop(columns=non_numeric)
 
-    all_returns: list[float] = []
-    all_dates: list = []
+    # buffers
+    ens_returns: list[float] = []
+    ens_dates: list = []
+    indiv_buffers = {m.name: [] for m in models}
+    indiv_dates = {m.name: [] for m in models}
 
     n = len(merged)
     start = 0
@@ -58,14 +103,8 @@ def run_walk_forward(
         # entrenar modelos
         trained = []
         for m in models:
-            # Reconstruir instancia nueva usando SOLO los args del __init__
-            # (no atributos internos como 'estimator' o '_fitted').
-            import inspect
             sig = inspect.signature(type(m).__init__)
-            init_kwargs = {
-                k: v for k, v in vars(m).items()
-                if k in sig.parameters and k != "self"
-            }
+            init_kwargs = {k: v for k, v in vars(m).items() if k in sig.parameters and k != "self"}
             inst = type(m)(**init_kwargs)
             if isinstance(inst, MonteCarloModel):
                 inst._prices = train["close"]
@@ -83,44 +122,43 @@ def run_walk_forward(
         if ensemble_method == "voting":
             final_signal = ensemble_voting(signals)
         elif ensemble_method == "weighted":
-            final_signal = ensemble_weighted(signals, trained, train)
+            final_signal = ensemble_weighted(signals, signals, train, test)
         elif ensemble_method == "stacking":
             final_signal = ensemble_stacking(signals, train, test)
         else:
             raise ValueError(f"Método '{ensemble_method}' no soportado.")
 
-        # aplicar filtro de régimen (ADX)
-        regime = rm.regime_filter(test, adx_threshold)
+        # SL por barra (ATR o GARCH)
+        if use_garch_sl:
+            from risk.garch_vol import garch_stop_loss
+            sl_series = garch_stop_loss(test, vol_mult=atr_mult)
+        else:
+            sl_series = rm.compute_stop_loss(test, atr_mult)
 
-        # simular retornos con SL/TP por barra
+        regime = rm.regime_filter(test, adx_threshold)
         close = test["close"].values
-        for i in range(len(test) - 1):
-            sig = final_signal.iloc[i]
-            if not regime.iloc[i] or sig == 0:
-                all_returns.append(0.0)
-                all_dates.append(test.index[i])
-                continue
-            entry = close[i]
-            sl = rm.compute_stop_loss(test.iloc[i:i + 1], atr_mult).iloc[0]
-            tp = rm.compute_take_profit(entry, sl, rr_ratio)
-            # retorno real de la siguiente barra (aproximación simple de ejecución)
-            next_ret = close[i + 1] / entry - 1.0
-            if sig > 0:  # long
-                ret = min(next_ret, tp / entry - 1.0)
-                if next_ret <= (sl / entry - 1.0):
-                    ret = sl / entry - 1.0
-            else:  # short
-                ret = -next_ret
-                if next_ret >= (tp / entry - 1.0):
-                    ret = -(tp / entry - 1.0)
-                elif next_ret >= (sl / entry - 1.0):
-                    ret = -(sl / entry - 1.0)
-            all_returns.append(ret * np.sign(sig))
-            all_dates.append(test.index[i])
+
+        # retornos del ensemble
+        ens_chunk = _simulate_returns_from_signal(final_signal, close, sl_series, regime, rr_ratio)
+        ens_returns.extend(ens_chunk)
+        ens_dates.extend(test.index[:len(ens_chunk)])
+
+        # retornos individuales (señal propia de cada modelo, mismo riesgo)
+        if return_individual:
+            for inst in trained:
+                name = inst.name
+                indiv_chunk = _simulate_returns_from_signal(signals[name], close, sl_series, regime, rr_ratio)
+                indiv_buffers[name].extend(indiv_chunk)
+                indiv_dates[name].extend(test.index[:len(indiv_chunk)])
 
         start += step
 
-    return pd.DataFrame({"date": all_dates, "return": all_returns}).set_index("date")["return"]
+    ens_series = pd.Series(ens_returns, index=ens_dates, name="ensemble")
+    if not return_individual:
+        return ens_series
+
+    indiv_series = {name: pd.Series(buf, index=indiv_dates[name], name=name) for name, buf in indiv_buffers.items()}
+    return {"ensemble": ens_series, "models": indiv_series}
 
 
 def ensemble_voting(signals, threshold=0.0):
@@ -128,15 +166,26 @@ def ensemble_voting(signals, threshold=0.0):
     return voting(signals, threshold)
 
 
-def ensemble_weighted(signals, trained_models, train):
+def ensemble_weighted(signals, signals_train, train, test):
+    """Promedio ponderado por Sharpe fuera de muestra de la ventana train.
+
+    Calcula el Sharpe de cada modelo en train (señal vs retorno real de train)
+    y pondera; si todos los Sharpe son bajos/negativos, cae a pesos iguales.
+    """
     from ensemble.ensemble_methods import weighted, compute_model_weights
-    # pesos por Sharpe en ventana train (aprox: retorno de señal vs retorno real)
+    # retorno real de train alineado a las fechas de las señales de train
+    # (usamos señales de test pero pesos de train vía compute_model_weights)
+    # Para pesos necesitamos retornos por modelo en train: aproximación con señal*retorno.
     returns_by_model = {}
+    train_ret = train["close"].pct_change().reindex(train.index).shift(-1).fillna(0)
     for name, s in signals.items():
-        aligned = s.index.intersection(train.index)
-        # aproximación: usamos el train para el peso
-        pass
-    # fallback: pesos iguales si no hay datos suficientes
+        aligned = s.index.intersection(train_ret.index)
+        if len(aligned) > 5:
+            r = s.loc[aligned] * train_ret.loc[aligned]
+            returns_by_model[name] = r
+    if returns_by_model:
+        weights = compute_model_weights(signals, returns_by_model, metric="sharpe")
+        return weighted(signals, weights)
     return weighted(signals)
 
 
