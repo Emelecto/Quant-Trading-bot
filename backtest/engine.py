@@ -118,11 +118,16 @@ def run_walk_forward(
                 inst._prices = test["close"]
             signals[inst.name] = inst.predict(test.drop(columns=["target"]))
 
+        # retorno futuro de train (para pesos por accuracy/dir de la ventana train)
+        train_fwd = train["close"].pct_change().shift(-1)
+
         # ensemble
         if ensemble_method == "voting":
             final_signal = ensemble_voting(signals)
         elif ensemble_method == "weighted":
-            final_signal = ensemble_weighted(signals, signals, train, test)
+            final_signal = ensemble_weighted(signals, trained, train, test)
+        elif ensemble_method == "accuracy":
+            final_signal = ensemble_accuracy_weighted(signals, trained, train, train_fwd)
         elif ensemble_method == "stacking":
             final_signal = ensemble_stacking(signals, train, test)
         else:
@@ -166,27 +171,46 @@ def ensemble_voting(signals, threshold=0.0):
     return voting(signals, threshold)
 
 
-def ensemble_weighted(signals, signals_train, train, test):
+def ensemble_weighted(signals, trained_models, train, test):
     """Promedio ponderado por Sharpe fuera de muestra de la ventana train.
 
-    Calcula el Sharpe de cada modelo en train (señal vs retorno real de train)
-    y pondera; si todos los Sharpe son bajos/negativos, cae a pesos iguales.
+    Calcula el Sharpe de la señal de cada modelo SOBRE LA VENTANA TRAIN
+    (señal de train vs retorno real de train) y pondera la señal de TEST.
+    Si no hay datos suficientes, cae a pesos iguales.
     """
     from ensemble.ensemble_methods import weighted, compute_model_weights
-    # retorno real de train alineado a las fechas de las señales de train
-    # (usamos señales de test pero pesos de train vía compute_model_weights)
-    # Para pesos necesitamos retornos por modelo en train: aproximación con señal*retorno.
+    train_ret = train["close"].pct_change().shift(-1).reindex(train.index).fillna(0)
+    # señales de los modelos ya entrenados, evaluadas en train
+    train_signals = {}
+    for inst in trained_models:
+        if isinstance(inst, MonteCarloModel):
+            inst._prices = train["close"]
+        train_signals[inst.name] = inst.predict(train.drop(columns=["target"]))
     returns_by_model = {}
-    train_ret = train["close"].pct_change().reindex(train.index).shift(-1).fillna(0)
-    for name, s in signals.items():
+    for name, s in train_signals.items():
         aligned = s.index.intersection(train_ret.index)
         if len(aligned) > 5:
-            r = s.loc[aligned] * train_ret.loc[aligned]
-            returns_by_model[name] = r
+            returns_by_model[name] = s.loc[aligned] * train_ret.loc[aligned]
     if returns_by_model:
-        weights = compute_model_weights(signals, returns_by_model, metric="sharpe")
+        weights = compute_model_weights(train_signals, returns_by_model, metric="sharpe")
         return weighted(signals, weights)
     return weighted(signals)
+
+
+def ensemble_accuracy_weighted(signals, trained_models, train, train_fwd):
+    """Promedio ponderado por accuracy direccional OOS de la ventana train.
+
+    Evita diluir la señal útil (XGBoost) con modelos de ruido (LR/Monte Carlo):
+    pesa cada modelo por cuánto supera 50% de acierto direccional en train.
+    """
+    from ensemble.ensemble_methods import accuracy_weighted
+    # señales de los modelos ya entrenados, evaluadas en train
+    train_signals = {}
+    for inst in trained_models:
+        if isinstance(inst, MonteCarloModel):
+            inst._prices = train["close"]
+        train_signals[inst.name] = inst.predict(train.drop(columns=["target"]))
+    return accuracy_weighted(signals, train_fwd, scores_by_model=train_signals)
 
 
 def ensemble_stacking(signals, train, test):

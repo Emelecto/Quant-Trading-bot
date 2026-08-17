@@ -81,3 +81,39 @@ def compute_model_weights(
     pos = {k: max(v, 0.0) for k, v in raw.items()}
     total = sum(pos.values()) or 1.0
     return {k: v / total for k, v in pos.items()}
+
+
+def directional_accuracy(signal: pd.Series, future_return: pd.Series) -> float:
+    """Accuracy direccional fuera de muestra: % de veces que sign(senal)==sign(retorno)."""
+    common = signal.dropna().index.intersection(future_return.dropna().index)
+    if len(common) < 5:
+        return 0.5
+    return float((np.sign(signal.loc[common]) == np.sign(future_return.loc[common])).mean())
+
+
+def compute_accuracy_weights(
+    scores_by_model: dict[str, pd.Series],
+    future_returns: pd.Series,
+) -> dict[str, float]:
+    """Pesos por accuracy direccional OOS de cada modelo en la ventana train.
+
+    Los modelos con accuracy ~0.5 (ruido) reciben peso ~0; los que predicen
+    bien (XGBoost) reciben peso cercano a 1. Esto EVITA diluir la señal útil
+    con modelos inútiles (el error original del ensemble equal-weight).
+    """
+    accs = {name: directional_accuracy(s, future_returns) for name, s in scores_by_model.items()}
+    # premium sobre 0.5 (mitad del azar): (acc - 0.5) / 0.5  -> [0, 1]
+    prem = {k: max((v - 0.5) / 0.5, 0.0) for k, v in accs.items()}
+    total = sum(prem.values()) or 1.0
+    return {k: v / total for k, v in prem.items()}
+
+
+def accuracy_weighted(
+    signals: dict[str, pd.Series],
+    future_returns: pd.Series,
+    scores_by_model: dict[str, pd.Series] | None = None,
+) -> pd.Series:
+    """Promedio ponderado por accuracy direccional OOS (ver compute_accuracy_weights)."""
+    sbm = scores_by_model if scores_by_model is not None else signals
+    w = compute_accuracy_weights(sbm, future_returns)
+    return weighted(signals, w)
