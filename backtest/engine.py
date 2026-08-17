@@ -74,14 +74,15 @@ def run_walk_forward(
     adx_threshold: float = 20.0,
     use_garch_sl: bool = False,
     return_individual: bool = False,
+    feature_df: pd.DataFrame | None = None,
 ):
     """Ejecuta walk-forward y devuelve retornos (ensemble y, opcionalmente, individuales).
 
-    Returns:
-        Si return_individual=False: pd.Series de retornos del ensemble.
-        Si return_individual=True: dict {"ensemble": Series, "models": {name: Series}}.
+    Args:
+        feature_df: matriz de features precomputada (ej. horizonte mensual).
+            Si es None, se usa build_feature_matrix(df) por defecto.
     """
-    feats = build_feature_matrix(df)
+    feats = feature_df if feature_df is not None else build_feature_matrix(df)
     merged = df.join(feats, how="inner")
     merged = merged.dropna()
     non_numeric = merged.select_dtypes(exclude=["number"]).columns
