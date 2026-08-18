@@ -154,15 +154,18 @@ st.subheader("📡 Paper Trading en Vivo — BTC mensual (riesgo 1%)")
 st.caption("Senal operativa del modelo mensual con los datos mas recientes de Binance. "
            "Capital simulado (paper). No ejecuta ordenes reales.")
 if st.button("Generar senal mensual actual"):
-    with st.spinner("Entrenando modelo mensual y generando senal..."):
-        from live import paper_trader as pt
-        sig = pt.run(capital=50.0, risk=0.01)
-    col_a, col_b, col_c = st.columns(3)
-    col_a.metric("Direccion", sig["direction"], help="LONG / SHORT / NEUTRAL")
-    col_b.metric("Score senal", f"{sig['signal_score']:.3f}")
-    col_c.metric("Tamano posicion", f"{sig['position_size_pct']:.1f}%")
-    st.write(f"**Cierre actual:** ${sig['last_close']:,.2f}  |  **SL:** ${sig['sl_level']:,.2f}  |  **TP:** ${sig['tp_level']:,.2f}")
-    st.write(f"**Volatilidad 21d:** {sig['vol_21d']:.4f}  |  **Riesgo por trade:** {sig['risk_per_trade_pct']:.1f}%  |  **Mantener:** {sig['hold_days']} dias")
-    st.json(sig)
+    try:
+        with st.spinner("Entrenando modelo mensual y generando senal..."):
+            from live import paper_trader as pt
+            sig = pt.run(capital=50.0, risk=0.01)
+        col_a, col_b, col_c = st.columns(3)
+        col_a.metric("Direccion", sig["direction"], help="LONG / SHORT / NEUTRAL")
+        col_b.metric("Score senal", f"{sig['signal_score']:.3f}")
+        col_c.metric("Tamano posicion", f"{sig['position_size_pct']:.1f}%")
+        st.write(f"**Cierre actual:** ${sig['last_close']:,.2f}  |  **SL:** ${sig['sl_level']:,.2f}  |  **TP:** ${sig['tp_level']:,.2f}")
+        st.write(f"**Volatilidad 21d:** {sig['vol_21d']:.4f}  |  **Riesgo por trade:** {sig['risk_per_trade_pct']:.1f}%  |  **Mantener:** {sig['hold_days']} dias")
+        st.json(sig)
+    except Exception as e:
+        st.error(f"No se pudo generar la senal en vivo (¿sin acceso a Binance?): {e}")
 else:
     st.info("Haz clic en 'Generar senal mensual actual' para ver la operacion sugerida (paper).")
