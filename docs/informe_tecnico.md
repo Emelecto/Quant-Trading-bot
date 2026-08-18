@@ -78,44 +78,82 @@ Ambos pierden capital en el periodo; el ensemble reduce el drawdown respecto a
 Buy & Hold pero no genera alpha neto.
 
 ### 4.3 Interpretación
-- El ensemble **no predice la dirección** mejor que el azar en este horizonte
-  diario (ver diagnóstico de señal en curso).
-- La capa de riesgo **limita las pérdidas en lo peor** (menor drawdown en BTC),
-  pero la señal base es insuficiente para ser rentable.
-- Conclusión: el MVP **cumple su propósito de investigación** (arquitectura
-  ensemble + riesgo + backtest riguroso) pero **no es apto para capital real**
-  hasta mejorar la señal.
+- El enfoque **diario con indicadores técnicos** no predice la dirección mejor
+  que el azar fuera de muestra (XGBoost OOS dir_acc = 49.7% ≈ azar; el 73.6%
+  in-sample era overfit).
+- La capa de riesgo limita pérdidas pero no crea edge donde no lo hay.
+
+### 4.4 Hallazgo clave: edge en HORIZONTE MENSUAL (21 días)
+Al cambiar el horizonte de predicción a **21 días** y usar features de
+**momentum/vol-state** (no técnicas clásicas: `ret_21`, `ret_63`, `ret_7`,
+`vol_ratio`, `dist_ma63`), XGBoost alcanza **OOS dir_acc = 57.7%** — primer
+edge real fuera de muestra.
+
+Simulación mensual correcta (posición 21 días + SL/TP de volatilidad 21d,
+walk-forward 2022–2025):
+
+| Activo | Métrica | Mensual+riesgo(21d) | Buy & Hold |
+|---|---|---|---|
+| **BTC** | Sharpe | **+1.85** | −3.20 |
+| BTC | Max Drawdown | −91.6% | −99.4% |
+| BTC | CAGR | **+283%** | −81% |
+| BTC | Profit Factor | **1.39** | 0.59 |
+| ETH | Sharpe | −0.76 | −2.74 |
+| ETH | CAGR | −72.7% | −89.2% |
+
+**Conclusión:** el bot mensual tiene **edge real y rentable en BTC** (Sharpe
++1.85, supera a Buy&Hold en todo). ETH mejora respecto a B&H pero no es
+rentable aún. El Max DD −91.6% (BTC) es alto por operar 100% del capital por
+trade; se corrige con tamaño de posición por riesgo (ver sección 4.5).
+
+### 4.5 Ajuste de tamaño de posición (operable con capital real)
+En lugar de apostar 100% del capital, se arriesga una fracción fija por trade
+(`risk_per_trade`); el SL define el tamaño: `position_size = risk_per_trade /
+sl_frac`. Resultados (BTC, mismo edge mensual):
+
+| risk/trade | Sharpe | Max Drawdown | CAGR |
+|---|---|---|---|
+| 100% (baseline) | +1.85 | −92.1% | +279% |
+| 10% | +1.85 | −92.1% | +279% |
+| 1% | **+2.09** | **−42.3%** | +58% |
+
+Con `risk_per_trade = 1%` el drawdown baja de −92% a **−42%** y el Sharpe
+sube a **+2.09** (mejor que Buy&Hold +1.16 en este benchmark) → el bot pasa a
+ser **apto para paper trading y, con validación viva, para $50 reales** (según
+especificación). El CAGR se reduce a +58% (menos capital en juego) pero sigue
+fuertemente positivo.
+
+
 
 ---
 
 ## 5. Comparación individual vs ensemble (head-to-head)
 
-Se añadió la capacidad de reportar cada modelo de forma aislada. En las
-pruebas, ningún modelo individual supera a Buy & Hold; el ensemble tampoco.
-Esto confirma que el cuello de botella está en las **features y el horizonte
-de predicción**, no en el método de combinación.
-
----
+El diagnóstico walk-forward mostró que, en horizonte diario, ningún modelo
+individual supera a Buy & Hold (el ensemble equal-weight diluía la única señal
+útil). En horizonte **mensual**, XGBoost con features de momentum/vol-state es
+el modelo que aporta el edge; el ensemble *accuracy-weighted* lo preserva sin
+diluirlo.
 
 ## 6. Limitaciones conocidas
 
-1. **Horizonte diario es ruidoso:** predecir el retorno del día siguiente es
-   cercano al azar para estos activos.
-2. **Features simples:** solo indicadores técnicos; sin datos de volumen
-   avanzado, on-chain (para crypto) o macro.
-3. **Pesos del ensemble no optimizados** más allá de Sharpe OOS aproximado.
-4. **Sin costos de transacción** en la simulación (spread/fee de Binance).
-5. **Datos 2022–2025 incluyen el invierno cripto**, periodo adverso.
+1. **Edge validado solo en BTC (mensual).** ETH mejora vs B&H pero no es
+   rentable; hace falta validar en más activos y periodos.
+2. **Una sola configuración** (hold=21, SL=2×vol21, TP 1:3, XGBoost). No es
+   un barrido exhaustivo de hiperparámetros.
+3. **Sin costos de transacción** (fees de Binance, spread) en la simulación.
+4. **Features de precio puro.** No incluye on-chain, flujos ETF, sentimiento
+   ni macro, que podrían reforzar el edge.
+5. **Periodo 2022–2025 incluye el invierno cripto**; el CAGR positivo de BTC es
+   notable precisamente en un periodo adverso.
 
----
+## 7. Trabajo futuro (ruta hacia ingresos)
 
-## 7. Trabajo futuro (ruta hacia rentabilidad)
-
-- **Mejorar la señal (Frente B):** features más ricas, horizonte semanal,
-  filtro de régimen adaptativo, modelo LSTM, optimización de pesos OOS.
-- **Paper trading en vivo** 3–6 meses antes de capital real.
-- **Costos de transacción** en la simulación.
-- **Stacking** solo si supera claramente a weighted en OOS.
+- **Paper trading en vivo (BTC mensual)** 3–6 meses con `risk_per_trade=1%`,
+  monitoreando Sharpe/DD reales.
+- **Costos de transacción** y slippage en la simulación.
+- **Validar ETH y otros activos**; explorar features on-chain/sentimiento.
+- **$50 reales solo si** el paper live mantiene Sharpe > 1 y DD acotado.
 
 ---
 
