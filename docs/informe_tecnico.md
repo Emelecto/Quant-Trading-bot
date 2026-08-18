@@ -117,11 +117,23 @@ sl_frac`. Resultados (BTC, mismo edge mensual):
 | 10% | +1.85 | −92.1% | +279% |
 | 1% | **+2.09** | **−42.3%** | +58% |
 
-Con `risk_per_trade = 1%` el drawdown baja de −92% a **−42%** y el Sharpe
-sube a **+2.09** (mejor que Buy&Hold +1.16 en este benchmark) → el bot pasa a
-ser **apto para paper trading y, con validación viva, para $50 reales** (según
-especificación). El CAGR se reduce a +58% (menos capital en juego) pero sigue
-fuertemente positivo.
+### 4.6 Costos de transacción (fees Binance)
+Se añadió comisión real: **0.1% por lado (taker)** = 0.2% por operación
+(ida+vuelta), aplicada sobre el tamaño de posición en entrada y salida.
+Resultados (walk-forward 2022–2025, fee 0.1%):
+
+| Activo | risk/trade | Sharpe | Max DD | CAGR | B&H Sharpe |
+|---|---|---|---|---|---|
+| **BTC** | 1% | **+1.56** | −44.2% | +40% | +0.87 |
+| BTC | 100% | +1.32 | −93.3% | +131% | +0.87 |
+| ETH | 1% | −0.80 | −62.4% | −14% | −0.22 |
+
+**Conclusión:** los fees reducen el Sharpe de BTC de +2.09 a **+1.56**
+(riesgo 1%), pero el edge se mantiene y sigue superando a Buy & Hold
+(+0.87). El CAGR baja a +40% (realista). El bot mensual BTC es rentable
+**incluso pagando comisiones reales de exchange**.
+
+
 
 
 

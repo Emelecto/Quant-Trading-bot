@@ -26,12 +26,14 @@ from explore_horizonte_mensual import monthly_features
 
 
 def simulate_monthly_with_risk(symbol="BTC/USDT", hold=21, atr_mult=2.0, rr=3.0,
-                               risk_per_trade=1.0):
-    """Simula el edge mensual con riesgo.
+                               risk_per_trade=1.0, fee=0.001):
+    """Simula el edge mensual con riesgo y costos de transaccion.
 
     risk_per_trade: fraccion del capital arriesgada por operacion.
       - 1.0  = apuesta 100% del capital (baseline, DD alto)
       - 0.01 = arriesga 1% del capital por trade (SL define el tamaño)
+    fee: comision por LADO (Binance taker ~0.001 = 0.1%). Se cobra al entrar
+      y al salir -> costo total por operacion = 2*fee * position_size.
     """
     df = fd.load_raw(symbol)
     df = fd.clean_ohlcv(df)
@@ -83,32 +85,35 @@ def simulate_monthly_with_risk(symbol="BTC/USDT", hold=21, atr_mult=2.0, rr=3.0,
             continue
         position_size = risk_per_trade / sl_frac
         position_size = min(position_size, 1.0)
+        # costo de entrada (fee por lado sobre el tamaño de posicion)
+        entry_cost = fee * position_size
+        capital *= (1 - entry_cost)
         exited = False
         for j in range(entry_i + 1, end_i + 1):
             price = close.iloc[j]
             if pos > 0 and price <= sl_level:
-                tr = (price / entry - 1) * position_size
-                capital *= (1 + tr); rets.append(tr); dates.append(close.index[j]); exited = True; break
+                tr = (price / entry - 1) * position_size - fee * position_size
+                capital *= (1 + tr); rets.append(tr - entry_cost); dates.append(close.index[j]); exited = True; break
             if pos > 0 and price >= tp_level:
-                tr = (price / entry - 1) * position_size
-                capital *= (1 + tr); rets.append(tr); dates.append(close.index[j]); exited = True; break
+                tr = (price / entry - 1) * position_size - fee * position_size
+                capital *= (1 + tr); rets.append(tr - entry_cost); dates.append(close.index[j]); exited = True; break
             if pos < 0 and price >= sl_level:
-                tr = -(price / entry - 1) * position_size
-                capital *= (1 + tr); rets.append(tr); dates.append(close.index[j]); exited = True; break
+                tr = -(price / entry - 1) * position_size - fee * position_size
+                capital *= (1 + tr); rets.append(tr - entry_cost); dates.append(close.index[j]); exited = True; break
             if pos < 0 and price <= tp_level:
-                tr = -(price / entry - 1) * position_size
-                capital *= (1 + tr); rets.append(tr); dates.append(close.index[j]); exited = True; break
+                tr = -(price / entry - 1) * position_size - fee * position_size
+                capital *= (1 + tr); rets.append(tr - entry_cost); dates.append(close.index[j]); exited = True; break
         if not exited:
             exit_price = close.iloc[end_i]
-            tr = (exit_price / entry - 1) * pos * position_size
-            capital *= (1 + tr); rets.append(tr); dates.append(close.index[end_i])
+            tr = (exit_price / entry - 1) * pos * position_size - fee * position_size
+            capital *= (1 + tr); rets.append(tr - entry_cost); dates.append(close.index[end_i])
         eq_curve.append(capital); eq_dates.append(dates[-1])
         i += 1
 
     r = pd.Series(rets, index=dates).sort_index()
     eq = pd.Series(eq_curve, index=eq_dates).sort_index()
     mres = M.all_metrics(r.fillna(0), eq)
-    # benchmark buy & hold sobre el mismo horizonte de senales
+    # benchmark buy & hold sobre el mismo horizonte de senales (con fee ida/vuelta)
     bh_rets = []
     bh_dates = []
     bi = 0
@@ -116,7 +121,8 @@ def simulate_monthly_with_risk(symbol="BTC/USDT", hold=21, atr_mult=2.0, rr=3.0,
         t = idx[bi]
         ei = close.index.get_loc(t)
         ej = min(ei + hold, len(close) - 1)
-        bh_rets.append(close.iloc[ej] / close.iloc[ei] - 1)
+        gross = close.iloc[ej] / close.iloc[ei] - 1
+        bh_rets.append(gross - 2 * fee)
         bh_dates.append(close.index[ej])
         bi += 1
     rbh = pd.Series(bh_rets, index=bh_dates).sort_index()
@@ -126,7 +132,7 @@ def simulate_monthly_with_risk(symbol="BTC/USDT", hold=21, atr_mult=2.0, rr=3.0,
 
 if __name__ == "__main__":
     for sym in ["BTC/USDT", "ETH/USDT"]:
-        for rpt in [1.0, 0.10, 0.01]:
-            m, mbh = simulate_monthly_with_risk(sym, risk_per_trade=rpt)
-            print(f"[{sym}] risk/trade={rpt:.2f} | Sharpe {m['sharpe']:.3f} MaxDD {m['max_drawdown']:.3f} "
+        for rpt in [1.0, 0.01]:
+            m, mbh = simulate_monthly_with_risk(sym, risk_per_trade=rpt, fee=0.001)
+            print(f"[{sym}] risk={rpt:.2f} fee=0.1% | Sharpe {m['sharpe']:.3f} MaxDD {m['max_drawdown']:.3f} "
                   f"CAGR {m['cagr']:.3f} | B&H Sharpe {mbh['sharpe']:.3f}")
