@@ -12,6 +12,7 @@ data/processed/
 models/saved/
 *.joblib
 *.pkl
+live/state.json
 .vscode/
 .idea/
 .DS_Store
