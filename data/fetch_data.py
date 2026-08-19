@@ -1,11 +1,14 @@
 """Módulo de obtención de datos de mercado (cripto diario).
 
-Responsabilidad única: descargar OHLCV desde el exchange vía ccxt,
-guardar crudo en cache y limpio en procesado.
+Responsabilidad única: cargar OHLCV para el backtest/dashboard.
 
-Cloud-safe: NO crea directorios ni escribe dentro del repo al importar
-(el filesystem de Streamlit Cloud es de solo lectura). El cache de datos
-usa /tmp en la nube para no romper el import ni la escritura.
+Diseño cloud-safe y robusto (crítico para Streamlit Cloud):
+- ccxt se importa DE FORMA DIFERIDA (dentro de fetch_ohlcv). Asi el modulo
+  carga aunque ccxt NO este instalado en la nube (Python 3.14) -> evita el
+  AttributeError 'has no attribute ensure_raw'.
+- Los datos vienen de data/datasets/ (tracked en el repo) -> el dashboard
+  funciona en la nube SIN ccxt ni descarga de red.
+- NO crea directorios ni escribe en el repo al importar (FS de solo lectura).
 """
 from __future__ import annotations
 
@@ -13,24 +16,51 @@ import os
 import time
 import tempfile
 from pathlib import Path
-from typing import Optional
 
 import pandas as pd
-import ccxt
 
 
-def _data_dir(sub: str) -> Path:
-    """Directorio de datos escribible.
+# Carpeta de datos tracked en el repo (siempre disponible, incluida en git).
+DATASETS_DIR = Path(__file__).resolve().parent.parent / "data" / "datasets"
 
-    En Streamlit Cloud el repo es de solo lectura, asi que usamos /tmp.
-    Localmente (donde el repo es escribible) usamos data/ dentro del repo.
-    """
+
+def _writable_cache(sub: str) -> Path:
+    """Cache escribible (/tmp en la nube, data/ local si escribible)."""
     if os.access(str(Path(__file__).resolve().parent.parent), os.W_OK):
         d = Path(__file__).resolve().parent.parent / "data" / sub
     else:
         d = Path(tempfile.gettempdir()) / "deepfin_data" / sub
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def _read_csv(path: Path) -> pd.DataFrame:
+    return pd.read_csv(path, parse_dates=["timestamp"])
+
+
+def load_raw(symbol: str) -> pd.DataFrame:
+    """Carga desde data/datasets/ (tracked) o desde cache escribible."""
+    fname = symbol.replace("/", "_") + ".csv"
+    ds = DATASETS_DIR / fname
+    if ds.exists():
+        return _read_csv(ds)
+    cache = _writable_cache("raw") / fname
+    if cache.exists():
+        return _read_csv(cache)
+    raise FileNotFoundError(f"No hay datos para {symbol}. Ejecuta fetch_and_persist().")
+
+
+def ensure_raw(symbol: str = "BTC/USDT", lookback_years: int = 3) -> pd.DataFrame:
+    """Carga datos de data/datasets/ (优先). Si faltan, intenta descargar (ccxt)."""
+    fname = symbol.replace("/", "_") + ".csv"
+    ds = DATASETS_DIR / fname
+    if ds.exists():
+        return _read_csv(ds)
+    # fallback: descarga via ccxt (requiere red + ccxt instalado)
+    raw = fetch_ohlcv(symbol, lookback_years=lookback_years)
+    _writable_cache("raw")
+    raw.to_csv(_writable_cache("raw") / fname, index=False)
+    return raw
 
 
 def fetch_ohlcv(
@@ -40,7 +70,8 @@ def fetch_ohlcv(
     exchange_name: str = "binance",
     rate_limit_sleep: float = 0.25,
 ) -> pd.DataFrame:
-    """Descarga velas OHLCV desde el exchange vía ccxt."""
+    """Descarga velas OHLCV desde el exchange via ccxt (import diferido)."""
+    import ccxt  # diferido: el modulo no falla si ccxt no esta instalado
     exchange = getattr(ccxt, exchange_name)({"enableRateLimit": True})
     since_ms = int((pd.Timestamp.utcnow() - pd.DateOffset(years=lookback_years)).timestamp() * 1000)
     all_rows: list[list] = []
@@ -60,35 +91,6 @@ def fetch_ohlcv(
     return df
 
 
-def save_raw(df: pd.DataFrame, symbol: str) -> Path:
-    fname = symbol.replace("/", "_") + ".csv"
-    path = _data_dir("raw") / fname
-    df.to_csv(path, index=False)
-    return path
-
-
-def load_raw(symbol: str) -> pd.DataFrame:
-    fname = symbol.replace("/", "_") + ".csv"
-    path = _data_dir("raw") / fname
-    if not path.exists():
-        raise FileNotFoundError(f"No existe cache para {symbol}. Ejecuta ensure_raw().")
-    return pd.read_csv(path, parse_dates=["timestamp"])
-
-
-def ensure_raw(symbol: str = "BTC/USDT", lookback_years: int = 3) -> pd.DataFrame:
-    """Carga datos; si no existen localmente en cache, los descarga de Binance.
-
-    Cloud-safe: usa /tmp como cache cuando el repo es de solo lectura.
-    """
-    fname = symbol.replace("/", "_") + ".csv"
-    path = _data_dir("raw") / fname
-    if path.exists():
-        return pd.read_csv(path, parse_dates=["timestamp"])
-    raw = fetch_ohlcv(symbol, lookback_years=lookback_years)
-    save_raw(raw, symbol)
-    return raw
-
-
 def clean_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     numeric_cols = ["open", "high", "low", "close", "volume"]
@@ -101,7 +103,7 @@ def clean_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
 
 def persist_clean(df: pd.DataFrame, symbol: str) -> Path:
     fname = symbol.replace("/", "_") + "_clean.csv"
-    path = _data_dir("processed") / fname
+    path = _writable_cache("processed") / fname
     df.to_csv(path, index=False)
     return path
 
@@ -113,7 +115,6 @@ def fetch_and_persist(
     exchange_name: str = "binance",
 ) -> pd.DataFrame:
     raw = fetch_ohlcv(symbol, timeframe, lookback_years, exchange_name)
-    save_raw(raw, symbol)
     clean = clean_ohlcv(raw)
     persist_clean(clean, symbol)
     print(f"[fetch] {symbol}: {len(clean)} velas limpias guardadas.")
