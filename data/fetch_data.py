@@ -1,13 +1,17 @@
-"""
-Módulo de obtención de datos de mercado (cripto diario).
+"""Módulo de obtención de datos de mercado (cripto diario).
 
 Responsabilidad única: descargar OHLCV desde el exchange vía ccxt,
-guardar crudo en data/raw y limpio en data/processed.
-Funciones puras y testeables: no dependen de estado global.
+guardar crudo en cache y limpio en procesado.
+
+Cloud-safe: NO crea directorios ni escribe dentro del repo al importar
+(el filesystem de Streamlit Cloud es de solo lectura). El cache de datos
+usa /tmp en la nube para no romper el import ni la escritura.
 """
 from __future__ import annotations
 
+import os
 import time
+import tempfile
 from pathlib import Path
 from typing import Optional
 
@@ -15,11 +19,18 @@ import pandas as pd
 import ccxt
 
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-RAW_DIR = BASE_DIR / "data" / "raw"
-PROCESSED_DIR = BASE_DIR / "data" / "processed"
-RAW_DIR.mkdir(parents=True, exist_ok=True)
-PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+def _data_dir(sub: str) -> Path:
+    """Directorio de datos escribible.
+
+    En Streamlit Cloud el repo es de solo lectura, asi que usamos /tmp.
+    Localmente (donde el repo es escribible) usamos data/ dentro del repo.
+    """
+    if os.access(str(Path(__file__).resolve().parent.parent), os.W_OK):
+        d = Path(__file__).resolve().parent.parent / "data" / sub
+    else:
+        d = Path(tempfile.gettempdir()) / "deepfin_data" / sub
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 
 def fetch_ohlcv(
@@ -51,28 +62,26 @@ def fetch_ohlcv(
 
 def save_raw(df: pd.DataFrame, symbol: str) -> Path:
     fname = symbol.replace("/", "_") + ".csv"
-    path = RAW_DIR / fname
+    path = _data_dir("raw") / fname
     df.to_csv(path, index=False)
     return path
 
 
 def load_raw(symbol: str) -> pd.DataFrame:
     fname = symbol.replace("/", "_") + ".csv"
-    path = RAW_DIR / fname
+    path = _data_dir("raw") / fname
     if not path.exists():
-        raise FileNotFoundError(f"No existe data/raw/{fname}. Ejecuta fetch_and_persist().")
+        raise FileNotFoundError(f"No existe cache para {symbol}. Ejecuta ensure_raw().")
     return pd.read_csv(path, parse_dates=["timestamp"])
 
 
 def ensure_raw(symbol: str = "BTC/USDT", lookback_years: int = 3) -> pd.DataFrame:
-    """Carga datos crudos; si no existen localmente, los descarga de Binance.
+    """Carga datos; si no existen localmente en cache, los descarga de Binance.
 
-    Usado por el dashboard/paper-trader para que funcionen en entornos sin
-    datos pre-guardados (ej. Streamlit Cloud). Si la descarga falla, lanza
-    un error claro.
+    Cloud-safe: usa /tmp como cache cuando el repo es de solo lectura.
     """
     fname = symbol.replace("/", "_") + ".csv"
-    path = RAW_DIR / fname
+    path = _data_dir("raw") / fname
     if path.exists():
         return pd.read_csv(path, parse_dates=["timestamp"])
     raw = fetch_ohlcv(symbol, lookback_years=lookback_years)
@@ -92,7 +101,7 @@ def clean_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
 
 def persist_clean(df: pd.DataFrame, symbol: str) -> Path:
     fname = symbol.replace("/", "_") + "_clean.csv"
-    path = PROCESSED_DIR / fname
+    path = _data_dir("processed") / fname
     df.to_csv(path, index=False)
     return path
 
