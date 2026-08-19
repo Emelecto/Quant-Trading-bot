@@ -43,7 +43,7 @@ def current_signal(symbol="BTC/USDT") -> dict:
     Es la senal 'en vivo' que el bot seguira mes a mes. El edge OOS ya fue
     validado por separado; aqui solo se produce la senal operativa.
     """
-    df = fd.load_raw(symbol)
+    df = fd.ensure_raw(symbol)
     df = fd.clean_ohlcv(df)
     feat = monthly_features(df)
     X = feat.drop(columns=["target"])

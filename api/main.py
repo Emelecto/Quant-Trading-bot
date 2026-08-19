@@ -43,7 +43,7 @@ def health():
 def get_signal(symbol: str = "BTC/USDT"):
     """Devuelve la señal actual del ensemble (score en [-1, +1])."""
     try:
-        df = fd.load_raw(symbol)
+        df = fd.ensure_raw(symbol)
     except FileNotFoundError:
         return {"error": f"Sin datos para {symbol}. Ejecuta data.fetch_data"}
     df = fd.clean_ohlcv(df)
@@ -72,7 +72,7 @@ def get_signal(symbol: str = "BTC/USDT"):
 def get_metrics(symbol: str = "BTC/USDT"):
     """Métricas de Buy & Hold (baseline) para comparación rápida."""
     try:
-        df = fd.load_raw(symbol)
+        df = fd.ensure_raw(symbol)
     except FileNotFoundError:
         return {"error": f"Sin datos para {symbol}."}
     df = fd.clean_ohlcv(df)

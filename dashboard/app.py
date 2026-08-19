@@ -42,7 +42,7 @@ STEP = 63
 @st.cache_data(show_spinner="Entrenando modelos y corriendo backtest con riesgo...")
 def compute_backtest(SYMBOL: str) -> dict:
     """Corre el walk-forward con riesgo UNA vez por activo (cache de Streamlit)."""
-    df = fd.load_raw(SYMBOL)
+    df = fd.ensure_raw(SYMBOL)
     df = fd.clean_ohlcv(df)
 
     models = [
@@ -106,9 +106,9 @@ st.metric("Señal del ensemble (score)", f"{res['last_signal']:.3f}",
 col1, col2 = st.columns(2)
 with col1:
     st.subheader("Equity Curve (señal acumulada, sin riesgo)")
-    feats = build_feature_matrix(fd.load_raw(SYMBOL))
+    feats = build_feature_matrix(fd.ensure_raw(SYMBOL))
     X = feats.drop(columns=["target"]); y = feats["target"]
-    close = fd.clean_ohlcv(fd.load_raw(SYMBOL))["close"]
+    close = fd.clean_ohlcv(fd.ensure_raw(SYMBOL))["close"]
     models = [LinearRegressionModel(), XGBoostModel(), MonteCarloModel(n_paths=300)]
     signals = {}
     for m in models:
@@ -117,7 +117,7 @@ with col1:
         m.fit(X, y)
         signals[m.name] = m.predict(X)
     final_signal = weighted(signals)
-    eq_simple = (1 + final_signal.shift(1).fillna(0) * fd.clean_ohlcv(fd.load_raw(SYMBOL))["close"]
+    eq_simple = (1 + final_signal.shift(1).fillna(0) * fd.clean_ohlcv(fd.ensure_raw(SYMBOL))["close"]
                  .pct_change().reindex(final_signal.index).fillna(0)).cumprod()
     fig = go.Figure()
     fig.add_trace(go.Scatter(y=eq_simple.values, mode="lines", name="Ensemble (simple)"))

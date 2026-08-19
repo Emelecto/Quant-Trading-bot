@@ -55,7 +55,7 @@ def build_feature_matrix(
 if __name__ == "__main__":
     from data import fetch_data as fd
     for sym in ["BTC/USDT", "ETH/USDT"]:
-        df = fd.load_raw(sym)
+        df = fd.ensure_raw(sym)
         df = fd.clean_ohlcv(df)
         feats = build_feature_matrix(df)
         print(f"[{sym}] features shape: {feats.shape}, win rate objetivo: {feats['target'].mean():.3f}")

@@ -64,6 +64,22 @@ def load_raw(symbol: str) -> pd.DataFrame:
     return pd.read_csv(path, parse_dates=["timestamp"])
 
 
+def ensure_raw(symbol: str = "BTC/USDT", lookback_years: int = 3) -> pd.DataFrame:
+    """Carga datos crudos; si no existen localmente, los descarga de Binance.
+
+    Usado por el dashboard/paper-trader para que funcionen en entornos sin
+    datos pre-guardados (ej. Streamlit Cloud). Si la descarga falla, lanza
+    un error claro.
+    """
+    fname = symbol.replace("/", "_") + ".csv"
+    path = RAW_DIR / fname
+    if path.exists():
+        return pd.read_csv(path, parse_dates=["timestamp"])
+    raw = fetch_ohlcv(symbol, lookback_years=lookback_years)
+    save_raw(raw, symbol)
+    return raw
+
+
 def clean_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     numeric_cols = ["open", "high", "low", "close", "volume"]

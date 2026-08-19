@@ -35,7 +35,7 @@ def simulate_monthly_with_risk(symbol="BTC/USDT", hold=21, atr_mult=2.0, rr=3.0,
     fee: comision por LADO (Binance taker ~0.001 = 0.1%). Se cobra al entrar
       y al salir -> costo total por operacion = 2*fee * position_size.
     """
-    df = fd.load_raw(symbol)
+    df = fd.ensure_raw(symbol)
     df = fd.clean_ohlcv(df)
     feat = monthly_features(df)
     X = feat.drop(columns=["target"])

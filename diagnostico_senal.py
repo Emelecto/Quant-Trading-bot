@@ -17,7 +17,7 @@ from models.xgboost_model import XGBoostModel
 from models.monte_carlo_model import MonteCarloModel
 from ensemble.ensemble_methods import weighted
 
-df = fd.load_raw("BTC/USDT"); df = fd.clean_ohlcv(df)
+df = fd.ensure_raw("BTC/USDT"); df = fd.clean_ohlcv(df)
 feats = build_feature_matrix(df)
 X = feats.drop(columns=["target"]); y = feats["target"]
 close = df["close"]

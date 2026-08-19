@@ -44,7 +44,7 @@ def monthly_features(df: pd.DataFrame) -> pd.DataFrame:
 
 def walk_forward_monthly(symbol="BTC/USDT"):
     """OOS dir_acc + Sharpe simple (sin riesgo) de las features mensuales."""
-    df = fd.load_raw(symbol)
+    df = fd.ensure_raw(symbol)
     df = fd.clean_ohlcv(df)
     feat = monthly_features(df)
     X = feat.drop(columns=["target"])
@@ -74,7 +74,7 @@ def walk_forward_monthly(symbol="BTC/USDT"):
 
 def validate_with_risk(symbol="BTC/USDT"):
     """Edge mensual con la capa de riesgo del motor (SL/TP 1:3, ADX)."""
-    df = fd.load_raw(symbol)
+    df = fd.ensure_raw(symbol)
     df = fd.clean_ohlcv(df)
     feat = monthly_features(df)
     models = [

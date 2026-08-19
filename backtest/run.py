@@ -65,7 +65,7 @@ def main():
 
     for sym in ["BTC/USDT", "ETH/USDT"]:
         try:
-            df = fd.load_raw(sym)
+            df = fd.ensure_raw(sym)
         except FileNotFoundError:
             print(f"[{sym}] sin datos locales; descargando...")
             df = fd.fetch_and_persist(symbol=sym, lookback_years=3)
