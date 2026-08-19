@@ -1,12 +1,11 @@
-"""
-Dashboard Streamlit para el bot DeepFin (visualización, paper trading).
+"""Dashboard Streamlit para el bot DeepFin (visualización, paper trading).
 
 Muestra: señal actual del ensemble, equity curve simulada (con capa de riesgo
 SL/TP + filtro de régimen vía motor walk-forward) y métricas comparativas
-(ensemble vs Buy & Hold). No controla el bot en vivo (MVP).
+(ensemble vs Buy & Hold). Incluye paper trading en vivo mensual (BTC, riesgo 1%).
 
-El 3er gráfico y la tabla de métricas usan el MISMO motor de backtest con
-riesgo (SL=2*ATR, TP 1:3, filtro ADX) para ser coherentes con el informe.
+Cloud-safe: los datos vienen de data/datasets/ (tracked en el repo), asi
+funciona en Streamlit Cloud sin ccxt ni descarga de red.
 """
 from __future__ import annotations
 
@@ -25,7 +24,6 @@ from models.linear_regression_model import LinearRegressionModel
 from models.xgboost_model import XGBoostModel
 from models.monte_carlo_model import MonteCarloModel
 from ensemble.ensemble_methods import weighted
-from risk import risk_management as rm
 from backtest.engine import run_walk_forward
 from backtest import metrics as M
 
@@ -42,46 +40,49 @@ STEP = 63
 @st.cache_data(show_spinner="Entrenando modelos y corriendo backtest con riesgo...")
 def compute_backtest(SYMBOL: str) -> dict:
     """Corre el walk-forward con riesgo UNA vez por activo (cache de Streamlit)."""
-    df = fd.ensure_raw(SYMBOL)
-    df = fd.clean_ohlcv(df)
+    try:
+        if not SYMBOL:
+            SYMBOL = "BTC/USDT"
+        df = fd.ensure_raw(SYMBOL)
+        df = fd.clean_ohlcv(df)
 
-    models = [
-        LinearRegressionModel(),
-        XGBoostModel(),
-        MonteCarloModel(n_paths=300, random_state=42),
-    ]
-    # retornos del ensemble (walk-forward, con SL/TP + régimen)
-    ens_rets = run_walk_forward(
-        df, models, ensemble_method="weighted",
-        train_window=TRAIN_WINDOW, test_window=TEST_WINDOW, step=STEP,
-        atr_mult=ATR_MULT, rr_ratio=RR_RATIO, adx_threshold=ADX_THRESHOLD,
-    )
-    # benchmark buy & hold (mismo periodo que el ensemble)
-    bh = df["close"].pct_change().reindex(ens_rets.index).dropna()
-    ens_rets = ens_rets.reindex(bh.index)  # alinear al periodo común
+        models = [
+            LinearRegressionModel(),
+            XGBoostModel(),
+            MonteCarloModel(n_paths=300, random_state=42),
+        ]
+        ens_rets = run_walk_forward(
+            df, models, ensemble_method="weighted",
+            train_window=TRAIN_WINDOW, test_window=TEST_WINDOW, step=STEP,
+            atr_mult=ATR_MULT, rr_ratio=RR_RATIO, adx_threshold=ADX_THRESHOLD,
+        )
+        bh = df["close"].pct_change().reindex(ens_rets.index).dropna()
+        ens_rets = ens_rets.reindex(bh.index)
 
-    ens_eq = (1 + ens_rets.fillna(0)).cumprod()
-    bh_eq = (1 + bh.fillna(0)).cumprod()
+        ens_eq = (1 + ens_rets.fillna(0)).cumprod()
+        bh_eq = (1 + bh.fillna(0)).cumprod()
 
-    # señal actual del ensemble (última ventana, para el indicador)
-    feats = build_feature_matrix(df)
-    X = feats.drop(columns=["target"]); y = feats["target"]; close = df["close"]
-    last_signal = weighted({m.name: _train_predict(m, X, y, close) for m in models}).iloc[-1]
+        feats = build_feature_matrix(df)
+        X = feats.drop(columns=["target"]); y = feats["target"]; close = df["close"]
+        last_signal = weighted({m.name: _train_predict(m, X, y, close) for m in models}).iloc[-1]
 
-    return {
-        "ens_rets": ens_rets, "bh": bh,
-        "ens_eq": ens_eq, "bh_eq": bh_eq,
-        "last_signal": float(last_signal),
-        "m_ens": M.all_metrics(ens_rets.fillna(0), ens_eq),
-        "m_bh": M.all_metrics(bh, bh_eq),
-    }
+        return {
+            "ens_rets": ens_rets, "bh": bh,
+            "ens_eq": ens_eq, "bh_eq": bh_eq,
+            "last_signal": float(last_signal),
+            "m_ens": M.all_metrics(ens_rets.fillna(0), ens_eq),
+            "m_bh": M.all_metrics(bh, bh_eq),
+        }
+    except Exception as e:
+        return {"error": f"No se pudo correr el backtest para {SYMBOL}: {e}"}
 
 
 def _train_predict(m, X, y, close):
     """Entrena y predice en TODO el dataset (solo para la señal actual del dashboard)."""
+    import inspect
     if getattr(m, "estimator", None) is not None or hasattr(m, "fit"):
         inst = type(m)(**{k: v for k, v in vars(m).items()
-                          if k in __import__("inspect").signature(type(m).__init__).parameters and k != "self"})
+                          if k in inspect.signature(type(m).__init__).parameters and k != "self"})
         if m.name == "monte_carlo":
             inst._prices = close.reindex(X.index)
         inst.fit(X, y)
@@ -96,8 +97,12 @@ SYMBOL = st.sidebar.selectbox("Activo", ["BTC/USDT", "ETH/USDT"], index=0)
 
 try:
     res = compute_backtest(SYMBOL)
-except FileNotFoundError:
-    st.error(f"Sin datos para {SYMBOL}. Ejecuta: python -m data.fetch_data")
+except Exception as e:
+    st.error(f"Error al cargar el backtest: {e}")
+    st.stop()
+
+if res.get("error"):
+    st.error(res["error"])
     st.stop()
 
 st.metric("Señal del ensemble (score)", f"{res['last_signal']:.3f}",
