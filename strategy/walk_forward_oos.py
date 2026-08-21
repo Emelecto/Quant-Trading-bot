@@ -83,18 +83,24 @@ def walk_forward_oos(df: pd.DataFrame, feature_fn, model, train_w: int = 252,
         Xte, yte = X.iloc[te_mask], y.iloc[te_mask]
         # Purged CV para seleccion de modelo/early stop (no leakage)
         splits = purged_kfold_split(times.iloc[tr_mask], n_splits=5, embargo=embargo)
-        # entrenar en purged train folds, validar en test fold
+        # y puede venir como -1/1 (direccion) o 0/1; mapear a 0/1 para el clasificador
+        ytr_bin = (ytr > 0).astype(int)
+        yte_bin = (yte > 0).astype(int)
         fold_acc = []
         for tr2, te2 in splits:
             m = type(model)(**model.get_params() if hasattr(model, "get_params") else {})
-            m.fit(Xtr.iloc[tr2], ytr.iloc[tr2])
+            m.fit(Xtr.iloc[tr2], ytr_bin.iloc[tr2])
             p = m.predict(Xtr.iloc[te2])
-            fold_acc.append(((p > 0) == (ytr.iloc[te2] > 0)).mean())
+            p_bin = (np.asarray(p) > 0.5).astype(int) if not np.issubdtype(type(p), np.integer) else (np.asarray(p) > 0).astype(int)
+            fold_acc.append(((p_bin > 0) == (ytr_bin.iloc[te2] > 0)).mean())
         # entrenar en todo el train purgado y predecir test
         m = type(model)(**model.get_params() if hasattr(model, "get_params") else {})
-        m.fit(Xtr, ytr)
+        m.fit(Xtr, ytr_bin)
         p = m.predict(Xte)
-        preds.extend(p)
+        p_bin = (np.asarray(p) > 0.5).astype(int) if hasattr(p, "__len__") else (int(p) > 0)
+        # direccion: 0->-1, 1->+1
+        p_dir = np.where(p_bin > 0, 1, -1)
+        preds.extend(p_dir)
         acts.extend(yte.values)
         dates.extend(times.iloc[te_mask].values)
         i += step
