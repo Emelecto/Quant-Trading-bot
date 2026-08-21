@@ -1,0 +1,32 @@
+name: DeepFin Monthly Bot
+
+on:
+  schedule:
+    # 1er dia de cada mes a las 06:00 UTC (despues del cierre mensual)
+    - cron: "0 6 1 * *"
+  workflow_dispatch:  # permite ejecucion manual desde la pestaña Actions
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run monthly bot (DRY_RUN por defecto)
+        env:
+          DRY_RUN: ${{ secrets.DRY_RUN || 'true' }}
+          BINANCE_TESTNET_API_KEY: ${{ secrets.BINANCE_TESTNET_API_KEY }}
+          BINANCE_TESTNET_API_SECRET: ${{ secrets.BINANCE_TESTNET_API_SECRET }}
+        run: |
+          python -m live.auto_trader
