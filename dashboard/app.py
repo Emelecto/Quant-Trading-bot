@@ -101,6 +101,17 @@ def load_ledger() -> dict:
 
 
 st.set_page_config(page_title="DeepFin Bot", layout="wide")
+# Estetica tipo Binance: verde/rojo para long/short, cards limpias
+st.markdown("""
+<style>
+.binance-card { border:1px solid #2b3139; border-radius:8px; padding:12px 16px; background:#181a20; margin-bottom:8px; }
+.long { color:#0ecb81; font-weight:600; }
+.short { color:#f6465d; font-weight:600; }
+.muted { color:#848e9c; font-size:0.85em; }
+.hdr { font-size:1.4em; font-weight:700; color:#eaecef; }
+.stTabs [data-baseweb="tab-list"] { gap:8px; }
+</style>
+""", unsafe_allow_html=True)
 st.title("DeepFin — Bot de Trading Ensemble (Paper Trading)")
 
 SYMBOL = st.sidebar.selectbox("Activo", ["BTC/USDT", "ETH/USDT"], index=0)
@@ -204,16 +215,20 @@ with tab2:
 
     if open_pos:
         st.subheader("Posición abierta")
-        op = pd.DataFrame([{
-            "Lado": open_pos["side"].upper(),
-            "Entrada": f"${open_pos['entry_price']:,.2f}",
-            "SL": f"${open_pos['sl']:,.2f}",
-            "TP": f"${open_pos['tp']:,.2f}",
-            "Qty BTC": open_pos["qty"],
-            "PNL no realizado": f"${open_pos.get('unrealized_pnl', 0):,.2f}",
-            "Apertura": open_pos["open_date"],
-        }])
-        st.dataframe(op, use_container_width=True)
+        side_cls = "long" if open_pos["side"] == "long" else "short"
+        st.markdown(f"""
+        <div class="binance-card">
+          <span class="hdr">BTC/USDT · <span class="{side_cls}">{open_pos['side'].upper()}</span></span>
+          <div class="muted">Apertura: {open_pos['open_date']}</div>
+          <div style="display:flex; gap:24px; margin-top:8px;">
+            <div><div class="muted">Entrada</div><div class="hdr">${open_pos['entry_price']:,.2f}</div></div>
+            <div><div class="muted">SL</div><div class="short">${open_pos['sl']:,.2f}</div></div>
+            <div><div class="muted">TP</div><div class="long">${open_pos['tp']:,.2f}</div></div>
+            <div><div class="muted">Qty</div><div class="hdr">{open_pos['qty']:.5f}</div></div>
+            <div><div class="muted">PNL no realizado</div><div class="{('long' if open_pos.get('unrealized_pnl',0)>=0 else 'short')}">${open_pos.get('unrealized_pnl',0):,.2f}</div></div>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
 
     if trades:
         st.subheader(f"Trades cerrados ({len(trades)})")
